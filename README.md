@@ -25,6 +25,6 @@ This tool runs on pure Python 3.8+ using the Standard Library. No external depen
 ### 1. Run via Terminal (Standalone)
 ```bash
 python main.py
-from main import main # o la classe/funzione principale del tool
+from main import main # or the tool's main class/function
 
 # Use directly in your project
