@@ -18,3 +18,10 @@ Forge realistic mock APIs and synthetic test datasets in seconds.
 ---
 ### 🛒 Official Storefront
 Explore all professional tools: [https://py-forge.com](https://py-forge.com)
+## 🚀 Quick Start
+
+This tool runs on pure Python 3.8+ using the Standard Library. No external dependencies or `pip install` required.
+
+### 1. Run via Terminal (Standalone)
+```bash
+python main.py
