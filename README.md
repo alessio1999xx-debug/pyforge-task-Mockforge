@@ -1,3 +1,9 @@
+---
+> ⚡ **Need production-ready Python tools with zero external dependencies?**
+> MockForge is just 1 of **32 automated micro-utilities** (rate limiters, auth engines, database profilers, and API tools) available in the **PyForge Vault**. The suite updates automatically with every new release.
+> 
+> 👉 **[Explore All 32 Assets & Lifetime Pass at py-forge.com](https://py-forge.com)**
+---
 > ⚡ **Building Python MVPs or backend webhooks?** 
 > Stop wasting hours configuring heavy mock servers. MockForge is part of **PyForge** — a professional vault of zero-dependency Python micro-utilities and CLI tools. 
 > 
