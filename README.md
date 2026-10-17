@@ -28,3 +28,8 @@ python main.py
 from main import main # or the tool's main class/function
 
 # Use directly in your project
+How to use:
+
+Run directly: python main.py
+
+Or import in your code: from main import AssetClass
