@@ -20,17 +20,20 @@ Forge realistic mock APIs and synthetic test datasets in seconds.
 ### 🛒 Official Storefront
 Explore all professional tools: [https://py-forge.com](https://py-forge.com)
 ## 🚀 Quick Start
+This tool runs on pure Python 3.8+ using the Standard Library. No external dependencies or pip install required.
 
-This tool runs on pure Python 3.8+ using the Standard Library. No external dependencies or `pip install` required.
+1. Direct Execution & Agentic Integration
+Run it as a standalone utility or call it directly from your AI agents/scripts:
 
-### 1. Run via Terminal (Standalone)
-```bash
+Bash
+
+
 python main.py
-from main import main # or the tool's main class/function
+2. Import in Your Code / Project
+Drop the single file into your project directory and import it natively:
 
-# Use directly in your project
-How to use:
+Python
 
-Run directly: python main.py
 
-Or import in your code: from main import AssetClass
+from main import AssetClass
+How Agents & Programs use it: Since it relies purely on the Python Standard Library, your LLM agents (LangChain, AutoGen, or custom runtimes) can execute it as an isolated subprocess or import it directly without dependency conflicts or virtual environments.
