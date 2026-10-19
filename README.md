@@ -28,12 +28,13 @@ Run it as a standalone utility or call it directly from your AI agents/scripts:
 Bash
 
 
-python main.py
+python main.py export-spec
+python main.py start
 2. Import in Your Code / Project
 Drop the single file into your project directory and import it natively:
 
 Python
 
 
-from main import AssetClass
+from main import MockForge
 How Agents & Programs use it: Since it relies purely on the Python Standard Library, your LLM agents (LangChain, AutoGen, or custom runtimes) can execute it as an isolated subprocess or import it directly without dependency conflicts or virtual environments.
