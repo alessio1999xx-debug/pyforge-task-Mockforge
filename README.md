@@ -64,16 +64,16 @@ Each seeded order has `transaction_code` (`TXN-` plus six digits), `amount` (a J
 }
 ```
 
-Those values are generated again at each process start. `GET /api/v1/analytics/realtime` renders a new body on every call. `active_users` is a JSON number because that template value is exactly `{{int:150:850}}`. `mrr` stays text because `{{currency}}` always expands to text. `load_factor` stays text because of the `%` suffix. One response has this shape:
+Those values are generated again at each process start. `GET /api/v1/analytics/realtime` renders a new body on every call. `active_users` is a JSON number because that template value is exactly `{{int:150:850}}`. `mrr` stays text because `{{currency}}` always expands to text. `load_factor` stays text because of the `%` suffix. One captured response:
 
 ```json
 {
-  "session_id": "8f5c0c2e-1b4a-4e5d-9c0a-6e7f8a9b0c1d",
-  "server_time": "2026-10-20T12:00:00.000000+00:00",
-  "active_users": 489,
-  "mrr": "741.23",
+  "session_id": "28b200a3-920e-4f3a-ae3b-3fd1ad9713a9",
+  "server_time": "2026-10-20T11:45:21.898438+00:00",
+  "active_users": 495,
+  "mrr": "9932.04",
   "status": "HEALTHY",
-  "infrastructure": { "datacenter": "us-east-1", "load_factor": "80%" }
+  "infrastructure": { "datacenter": "us-east-1", "load_factor": "28%" }
 }
 ```
 

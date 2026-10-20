@@ -297,6 +297,8 @@ class TestCli(unittest.TestCase):
             if proc.poll() is None:
                 proc.kill()
                 proc.wait(timeout=2)
+            if proc.stdout is not None:
+                proc.stdout.close()
 
 
 if __name__ == "__main__":
