@@ -1,21 +1,8 @@
 #!/usr/bin/env python3
-"""
-================================================================================
-MOCKFORGE: Autonomous API Simulation & Synthetic Microservice Engine
-================================================================================
-Architected by: Autonomous Economic Agent & Systems Specialist
-Target Market : High-Velocity DevOps, QA Automation, Microservices Testing
-Value Pitch   : Reduces dev cycle stalls by 85%; eliminates staging backend
-                dependencies through contract-driven, stateful mock environments.
+"""MockForge: a single-file mock HTTP API.
 
-Features:
-- Zero external dependencies (Pure Python Standard Library).
-- Dynamic synthetic data synthesis (Faker-style primitives, dynamic UUIDs, etc.).
-- Stateful CRUD memory engine with automated resource collections.
-- Chaos Engineering simulation (configurable latency jitter and failure rates).
-- Built-in Autonomous Telemetry & Economic Value Calculator (ROI metrics).
-- OpenAPI-compatible configuration export and inspection endpoints.
-================================================================================
+Stateful JSON routes, string templates, optional latency, and a random
+HTTP 500 rate. Python standard library only.
 """
 
 import argparse
@@ -25,27 +12,39 @@ import json
 import random
 import re
 import socketserver
-import string
 import sys
 import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 
 # =====================================================================
-# 1. SYNTHETIC ENGINE: Dynamic Generative Data Primitives
+# 1. SYNTHETIC DATA
 # =====================================================================
+
+class TemplateError(Exception):
+    """A template macro could not be rendered."""
+
 
 class DataForge:
-    """Generates realistic synthetic business entities and dynamic primitives."""
+    """Draws values from small fixed lists and fills ``{{...}}`` macros."""
 
     FIRST_NAMES = ["Alex", "Jordan", "Taylor", "Morgan", "Casey", "Elena", "Marcus", "Siddharth", "Mei", "Devon"]
     LAST_NAMES = ["Vance", "Chen", "Sterling", "Kowalski", "O'Connor", "Patel", "Nakamura", "Al-Mansoor", "Gomez"]
     COMPANIES = ["ApexScale", "OmniCloud", "HyperDrive AI", "Starlight Pay", "Quantix Labs", "VectorSec"]
     STATUSES = ["ACTIVE", "PENDING", "PROCESSING", "FLAGGED", "COMPLETED", "SUSPENDED"]
     DOMAINS = ["com", "io", "tech", "net", "org"]
+
+    _UUID = re.compile(r"\{\{uuid\}\}")
+    _NAME = re.compile(r"\{\{name\}\}")
+    _EMAIL = re.compile(r"\{\{email\}\}")
+    _COMPANY = re.compile(r"\{\{company\}\}")
+    _STATUS = re.compile(r"\{\{status\}\}")
+    _ISO_DATE = re.compile(r"\{\{iso_date\}\}")
+    _INT = re.compile(r"\{\{int:(-?\d+):(-?\d+)\}\}")
+    _CURRENCY = re.compile(r"\{\{currency\}\}")
 
     @classmethod
     def name(cls) -> str:
@@ -71,51 +70,56 @@ class DataForge:
         return round(random.uniform(min_val, max_val), 2)
 
     @classmethod
+    def _render_int(cls, min_v: int, max_v: int) -> int:
+        if min_v > max_v:
+            raise TemplateError(
+                f"{{{{int:{min_v}:{max_v}}}}} is invalid because {min_v} is greater than {max_v}."
+            )
+        return random.randint(min_v, max_v)
+
+    @classmethod
     def synthesize_template(cls, template: Any) -> Any:
-        """
-        Recursively processes templates and replaces string macros:
-        {{uuid}}, {{name}}, {{email}}, {{company}}, {{status}}, {{currency}},
-        {{int:min:max}}, {{iso_date}}
+        """Replace macros in strings. Each occurrence is rendered on its own.
+
+        A string that is only ``{{int:min:max}}`` becomes an int. The same
+        token embedded in other text stays text. ``min > max`` raises
+        ``TemplateError``.
         """
         if isinstance(template, dict):
             return {k: cls.synthesize_template(v) for k, v in template.items()}
-        elif isinstance(template, list):
+        if isinstance(template, list):
             return [cls.synthesize_template(item) for item in template]
-        elif isinstance(template, str):
-            val = template
-            if "{{uuid}}" in val:
-                val = val.replace("{{uuid}}", str(uuid.uuid4()))
-            if "{{name}}" in val:
-                val = val.replace("{{name}}", cls.name())
-            if "{{email}}" in val:
-                val = val.replace("{{email}}", cls.email())
-            if "{{company}}" in val:
-                val = val.replace("{{company}}", cls.company())
-            if "{{status}}" in val:
-                val = val.replace("{{status}}", cls.status())
-            if "{{iso_date}}" in val:
-                val = val.replace("{{iso_date}}", datetime.datetime.now(datetime.timezone.utc).isoformat())
-            
-            # Numeric custom matchers
-            int_match = re.search(r"\{\{int:(-?\d+):(-?\d+)\}\}", val)
-            if int_match:
-                min_v, max_v = int(int_match.group(1)), int(int_match.group(2))
-                val = re.sub(r"\{\{int:(-?\d+):(-?\d+)\}\}", str(random.randint(min_v, max_v)), val)
-            
-            curr_match = re.search(r"\{\{currency\}\}", val)
-            if curr_match:
-                val = re.sub(r"\{\{currency\}\}", str(cls.currency()), val)
+        if not isinstance(template, str):
+            return template
 
-            return val
-        return template
+        whole_int = cls._INT.fullmatch(template)
+        if whole_int:
+            return cls._render_int(int(whole_int.group(1)), int(whole_int.group(2)))
+
+        val = template
+        val = cls._UUID.sub(lambda _m: str(uuid.uuid4()), val)
+        val = cls._NAME.sub(lambda _m: cls.name(), val)
+        val = cls._EMAIL.sub(lambda _m: cls.email(), val)
+        val = cls._COMPANY.sub(lambda _m: cls.company(), val)
+        val = cls._STATUS.sub(lambda _m: cls.status(), val)
+        val = cls._ISO_DATE.sub(
+            lambda _m: datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            val,
+        )
+        val = cls._INT.sub(
+            lambda m: str(cls._render_int(int(m.group(1)), int(m.group(2)))),
+            val,
+        )
+        val = cls._CURRENCY.sub(lambda _m: str(cls.currency()), val)
+        return val
 
 
 # =====================================================================
-# 2. STATE STORAGE: In-Memory Multi-Resource State Engine
+# 2. IN-MEMORY STORE
 # =====================================================================
 
 class StateStore:
-    """Thread-safe transactional memory store for stateful CRUD APIs."""
+    """Thread-safe in-memory store for stateful CRUD routes."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -148,7 +152,7 @@ class StateStore:
                 return None
             record = coll[item_id]
             record.update(payload)
-            record["id"] = item_id  # Enforce primary key consistency
+            record["id"] = item_id
             record["_updated_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
             return record
 
@@ -162,27 +166,29 @@ class StateStore:
 
 
 # =====================================================================
-# 3. ROUTING & CONTRACT CONFIGURATION
+# 3. ROUTES AND TELEMETRY
 # =====================================================================
 
 @dataclass
 class RouteContract:
     path_regex: re.Pattern
     method: str
+    path_template: str = ""
     response_template: Optional[Any] = None
     stateful_resource: Optional[str] = None
-    latency_ms: Tuple[int, int] = (10, 60)  # Min / Max artificial latency
-    failure_rate: float = 0.0               # 0.0 to 1.0 probability of HTTP 500
+    latency_ms: Tuple[int, int] = (10, 60)
+    failure_rate: float = 0.0
     is_stateful: bool = False
-    action: str = "custom"                  # 'list', 'get', 'create', 'update', 'delete', 'custom'
+    action: str = "custom"  # list, get, create, update, delete, custom
 
 
 @dataclass
 class Telemetry:
+    """Request counters. Latency includes any artificial sleep."""
+
     total_requests: int = 0
     total_failures: int = 0
     total_latency_ms: float = 0.0
-    saved_dev_hours: float = 0.0
     start_time: float = field(default_factory=time.time)
     _lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -192,41 +198,27 @@ class Telemetry:
             if failed:
                 self.total_failures += 1
             self.total_latency_ms += latency
-            # Heuristic: Each intercepted/simulated mock request saves ~1.5 minutes of
-            # manual stubbing, contract negotiation, or frontend blockage overhead.
-            self.saved_dev_hours += (1.5 / 60.0)
 
     def get_summary(self) -> Dict[str, Any]:
         with self._lock:
             uptime_seconds = time.time() - self.start_time
             avg_latency = (self.total_latency_ms / self.total_requests) if self.total_requests > 0 else 0
-            # Industry benchmark: Senior Engineer @ $95/hr
-            economic_savings_usd = round(self.saved_dev_hours * 95.0, 2)
-            
             return {
                 "uptime_seconds": round(uptime_seconds, 1),
                 "total_requests": self.total_requests,
                 "total_failures": self.total_failures,
                 "avg_latency_ms": round(avg_latency, 2),
-                "estimated_dev_hours_saved": round(self.saved_dev_hours, 2),
-                "economic_value_saved_usd": f"${economic_savings_usd:,.2f}",
-                "velocity_roi_multiplier": "12.8x"
             }
 
 
 # =====================================================================
-# 4. DISPATCHER & HTTP SERVER CORE
+# 4. HTTP HANDLER
 # =====================================================================
 
 class MockForgeHandler(http.server.BaseHTTPRequestHandler):
-    store = StateStore()
-    telemetry = Telemetry()
-    routes: List[RouteContract] = []
-    request_log: List[Dict[str, Any]] = []
-    log_lock = threading.Lock()
+    protocol_version = "HTTP/1.0"
 
     def do_OPTIONS(self):
-        """Cross-Origin Resource Sharing (CORS) auto-negotiation."""
         self.send_response(204)
         self._send_cors_headers()
         self.end_headers()
@@ -246,11 +238,14 @@ class MockForgeHandler(http.server.BaseHTTPRequestHandler):
     def do_DELETE(self):
         self._dispatch("DELETE")
 
+    def _app(self) -> "MockForge":
+        return self.server.forge  # type: ignore[attr-defined]
+
     def _send_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
-        self.send_header("X-Powered-By", "MockForge Autonomous Engine")
+        self.send_header("X-Powered-By", "MockForge")
 
     def _read_body(self) -> Dict[str, Any]:
         content_length = int(self.headers.get("Content-Length", 0))
@@ -271,34 +266,74 @@ class MockForgeHandler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _dispatch(self, method: str):
-        start_time = time.time()
-        url_path = self.path.split("?")[0]
+    def _finish(self, app: "MockForge", method: str, url_path: str, start_time: float, status_code: int, payload: Any):
+        elapsed = (time.time() - start_time) * 1000
+        app.record_request(method, url_path, status_code, elapsed)
+        if status_code == 204:
+            self.send_response(204)
+            self._send_cors_headers()
+            self.end_headers()
+        else:
+            self._write_json(status_code, payload)
 
-        # 1. Reserved Engine Endpoints
+    def _execute(self, app: "MockForge", route: RouteContract, match_vars: Dict[str, str], body: Dict[str, Any]) -> Tuple[int, Any]:
+        if route.is_stateful and route.stateful_resource:
+            res = route.stateful_resource
+            action = route.action
+            if action == "list":
+                rows = app.store.get_collection(res)
+                return 200, {"data": rows, "total": len(rows)}
+            if action == "get":
+                item_id = match_vars.get("id")
+                record = app.store.get_item(res, item_id)
+                if record:
+                    return 200, record
+                return 404, {"error": "NotFound", "message": f"{res} with id '{item_id}' not found."}
+            if action == "create":
+                return 201, app.store.create_item(res, body)
+            if action == "update":
+                item_id = match_vars.get("id")
+                record = app.store.update_item(res, item_id, body)
+                if record:
+                    return 200, record
+                return 404, {"error": "NotFound", "message": f"{res} with id '{item_id}' not found."}
+            if action == "delete":
+                item_id = match_vars.get("id")
+                if app.store.delete_item(res, item_id):
+                    return 204, ""
+                return 404, {"error": "NotFound", "message": f"{res} with id '{item_id}' not found."}
+        return 200, DataForge.synthesize_template(route.response_template)
+
+    def _dispatch(self, method: str):
+        app = self._app()
+        start_time = time.time()
+        url_path = self.path.split("?", 1)[0]
+
         if url_path == "/_mockforge/metrics":
-            metrics = self.telemetry.get_summary()
-            self._write_json(200, {"status": "ONLINE", "telemetry": metrics})
+            self._write_json(200, {"status": "ONLINE", "telemetry": app.telemetry.get_summary()})
             return
 
         if url_path == "/_mockforge/routes":
             active_routes = [
-                {"method": r.method, "pattern": r.path_regex.pattern, "action": r.action, "stateful": r.is_stateful}
-                for r in self.routes
+                {
+                    "method": route.method,
+                    "path": route.path_template,
+                    "pattern": route.path_regex.pattern,
+                    "action": route.action,
+                    "stateful": route.is_stateful,
+                }
+                for route in app.routes
             ]
             self._write_json(200, {"routes": active_routes})
             return
 
         if url_path == "/_mockforge/logs":
-            with self.log_lock:
-                self._write_json(200, {"recent_logs": self.request_log[-50:]})
+            self._write_json(200, {"recent_logs": app.recent_logs()})
             return
 
-        # 2. Dynamic Route Matching
         matched_route: Optional[RouteContract] = None
         match_vars: Dict[str, str] = {}
-
-        for route in self.routes:
+        for route in app.routes:
             if route.method == method:
                 match = route.path_regex.match(url_path)
                 if match:
@@ -306,180 +341,197 @@ class MockForgeHandler(http.server.BaseHTTPRequestHandler):
                     match_vars = match.groupdict()
                     break
 
-        if not matched_route:
-            self.telemetry.record(latency=(time.time() - start_time) * 1000, failed=True)
-            self._write_json(404, {
+        if matched_route is None:
+            self._finish(app, method, url_path, start_time, 404, {
                 "error": "Contract Unmatched",
                 "message": f"No mock or state contract matches {method} {url_path}",
-                "mockforge_hint": "Inspect registered endpoints at /_mockforge/routes"
+                "mockforge_hint": "Inspect registered endpoints at /_mockforge/routes",
             })
             return
 
-        # 3. Simulate Chaos (Latency & Errors)
-        sim_latency = random.uniform(matched_route.latency_ms[0], matched_route.latency_ms[1]) / 1000.0
-        time.sleep(sim_latency)
+        body = self._read_body() if method in ("POST", "PUT", "PATCH") else {}
+        delay = random.uniform(matched_route.latency_ms[0], matched_route.latency_ms[1]) / 1000.0
+        if delay > 0:
+            time.sleep(delay)
 
         if matched_route.failure_rate > 0.0 and random.random() < matched_route.failure_rate:
-            elapsed = (time.time() - start_time) * 1000
-            self.telemetry.record(latency=elapsed, failed=True)
-            self._write_json(500, {
+            self._finish(app, method, url_path, start_time, 500, {
                 "error": "InjectedChaosFailure",
                 "message": "Chaos fault injection triggered by contract specification.",
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             })
             return
 
-        # 4. Handle Execution (Stateful vs Template)
-        body = self._read_body() if method in ["POST", "PUT", "PATCH"] else {}
-        status_code = 200
-        response_data: Any = {}
-
-        if matched_route.is_stateful and matched_route.stateful_resource:
-            res = matched_route.stateful_resource
-            action = matched_route.action
-
-            if action == "list":
-                response_data = {"data": self.store.get_collection(res), "total": len(self.store.get_collection(res))}
-            elif action == "get":
-                item_id = match_vars.get("id")
-                record = self.store.get_item(res, item_id)
-                if record:
-                    response_data = record
-                else:
-                    status_code = 404
-                    response_data = {"error": "NotFound", "message": f"{res} with id '{item_id}' not found."}
-            elif action == "create":
-                status_code = 201
-                response_data = self.store.create_item(res, body)
-            elif action == "update":
-                item_id = match_vars.get("id")
-                record = self.store.update_item(res, item_id, body)
-                if record:
-                    response_data = record
-                else:
-                    status_code = 404
-                    response_data = {"error": "NotFound", "message": f"{res} with id '{item_id}' not found."}
-            elif action == "delete":
-                item_id = match_vars.get("id")
-                success = self.store.delete_item(res, item_id)
-                if success:
-                    status_code = 204
-                    response_data = ""
-                else:
-                    status_code = 404
-                    response_data = {"error": "NotFound", "message": f"{res} with id '{item_id}' not found."}
-        else:
-            # Synthetic template generation
-            response_data = DataForge.synthesize_template(matched_route.response_template)
-
-        elapsed = (time.time() - start_time) * 1000
-        self.telemetry.record(latency=elapsed, failed=(status_code >= 400))
-
-        # Record Audit Logs
-        with self.log_lock:
-            self.request_log.append({
-                "method": method,
-                "path": url_path,
-                "status": status_code,
-                "latency_ms": round(elapsed, 2),
-                "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+        try:
+            status_code, response_data = self._execute(app, matched_route, match_vars, body)
+        except TemplateError as exc:
+            self._finish(app, method, url_path, start_time, 400, {
+                "error": "TemplateError",
+                "message": str(exc),
             })
-            if len(self.request_log) > 200:
-                self.request_log.pop(0)
+            return
 
-        if status_code == 204:
-            self.send_response(204)
-            self._send_cors_headers()
-            self.end_headers()
-        else:
-            self._write_json(status_code, response_data)
+        self._finish(app, method, url_path, start_time, status_code, response_data)
 
     def log_message(self, fmt, *args):
-        # Override to keep console output clean; routing logging handled by telemetry
         sys.stderr.write(f"[MockForge:Access] {self.address_string()} - {args[0]} {args[1]} -> {args[2]}\n")
 
 
 class ThreadedHTTPServer(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
+    allow_reuse_address = True
 
 
 # =====================================================================
-# 5. MOCKFORGE BUILDER ENGINE
+# 5. MOCKFORGE
 # =====================================================================
 
 class MockForge:
-    """Core programmatic orchestrator for MockForge deployments."""
+    """Programmatic mock server. Each instance has its own store and routes."""
 
-    def __init__(self, port: int = 8080, host: str = "0.0.0.0"):
+    def __init__(self, port: int = 8080, host: str = "127.0.0.1"):
         self.port = port
         self.host = host
         self.routes: List[RouteContract] = []
+        self.store = StateStore()
+        self.telemetry = Telemetry()
+        self.request_log: List[Dict[str, Any]] = []
+        self.log_lock = threading.Lock()
 
     def mock(self, path: str, method: str = "GET", response: Any = None,
              latency_ms: Tuple[int, int] = (10, 50), failure_rate: float = 0.0):
-        """Register a static or dynamically synthesized contract route."""
+        """Register a template route. ``{param}`` becomes a path segment."""
         regex_path = re.sub(r"\{([a-zA-Z0-9_]+)\}", r"(?P<\1>[^/]+)", path)
         pattern = re.compile(f"^{regex_path}$")
         self.routes.append(RouteContract(
             path_regex=pattern,
             method=method.upper(),
+            path_template=path,
             response_template=response,
             latency_ms=latency_ms,
             failure_rate=failure_rate,
             is_stateful=False,
-            action="custom"
+            action="custom",
         ))
 
     def resource(self, resource_name: str, base_path: Optional[str] = None):
-        """Creates a complete automatic stateful CRUD REST suite."""
+        """Register list/create plus get/update/delete routes for one collection."""
         base = base_path or f"/api/v1/{resource_name}"
         list_pat = re.compile(f"^{base}/?$")
         item_pat = re.compile(f"^{base}/(?P<id>[^/]+)/?$")
+        item_template = f"{base}/{{id}}"
 
-        # GET all
-        self.routes.append(RouteContract(list_pat, "GET", stateful_resource=resource_name, is_stateful=True, action="list"))
-        # POST create
-        self.routes.append(RouteContract(list_pat, "POST", stateful_resource=resource_name, is_stateful=True, action="create"))
-        # GET single
-        self.routes.append(RouteContract(item_pat, "GET", stateful_resource=resource_name, is_stateful=True, action="get"))
-        # PUT update
-        self.routes.append(RouteContract(item_pat, "PUT", stateful_resource=resource_name, is_stateful=True, action="update"))
-        # PATCH update
-        self.routes.append(RouteContract(item_pat, "PATCH", stateful_resource=resource_name, is_stateful=True, action="update"))
-        # DELETE
-        self.routes.append(RouteContract(item_pat, "DELETE", stateful_resource=resource_name, is_stateful=True, action="delete"))
+        self.routes.append(RouteContract(list_pat, "GET", path_template=base, stateful_resource=resource_name, is_stateful=True, action="list"))
+        self.routes.append(RouteContract(list_pat, "POST", path_template=base, stateful_resource=resource_name, is_stateful=True, action="create"))
+        self.routes.append(RouteContract(item_pat, "GET", path_template=item_template, stateful_resource=resource_name, is_stateful=True, action="get"))
+        self.routes.append(RouteContract(item_pat, "PUT", path_template=item_template, stateful_resource=resource_name, is_stateful=True, action="update"))
+        self.routes.append(RouteContract(item_pat, "PATCH", path_template=item_template, stateful_resource=resource_name, is_stateful=True, action="update"))
+        self.routes.append(RouteContract(item_pat, "DELETE", path_template=item_template, stateful_resource=resource_name, is_stateful=True, action="delete"))
 
     def seed(self, resource_name: str, count: int, generator: Callable[[], Dict[str, Any]]):
-        """Pre-seeds the stateful memory engine with synthetic instances."""
+        """Insert ``count`` records from ``generator`` into this instance's store."""
         for _ in range(count):
-            item = generator()
-            MockForgeHandler.store.create_item(resource_name, item)
+            self.store.create_item(resource_name, generator())
+
+    def record_request(self, method: str, path: str, status: int, latency_ms: float):
+        self.telemetry.record(latency_ms, failed=status >= 400)
+        entry = {
+            "method": method,
+            "path": path,
+            "status": status,
+            "latency_ms": round(latency_ms, 2),
+            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        }
+        with self.log_lock:
+            self.request_log.append(entry)
+            if len(self.request_log) > 200:
+                self.request_log.pop(0)
+
+    def recent_logs(self) -> List[Dict[str, Any]]:
+        with self.log_lock:
+            return list(self.request_log[-50:])
+
+    def export_spec(self) -> Dict[str, Any]:
+        """OpenAPI 3.0 path list for the routes on this instance.
+
+        Built-in ``/_mockforge/`` inspection routes are included. Response
+        schemas are not.
+        """
+        summaries = {
+            "list": "List {name}",
+            "create": "Create {name}",
+            "get": "Get one {name} item",
+            "update": "Update {name}",
+            "delete": "Delete {name}",
+        }
+        paths: Dict[str, Dict[str, Any]] = {}
+        for route in self.routes:
+            path = route.path_template or route.path_regex.pattern
+            operations = paths.setdefault(path, {})
+            key = route.method.lower()
+            if key in operations:
+                continue
+            if route.action == "custom":
+                summary = f"{route.method} {path}"
+            else:
+                summary = summaries[route.action].format(name=route.stateful_resource or "resource")
+            operation: Dict[str, Any] = {"summary": summary}
+            if route.failure_rate > 0:
+                operation["description"] = f"Returns HTTP 500 with probability {route.failure_rate}."
+            operations[key] = operation
+
+        for path, summary in (
+            ("/_mockforge/metrics", "Uptime, request count, failures, and average latency"),
+            ("/_mockforge/routes", "Routes registered on this server"),
+            ("/_mockforge/logs", "Recent requests, including unmatched 404s and injected 500s"),
+        ):
+            paths.setdefault(path, {}).setdefault("get", {"summary": summary})
+
+        return {
+            "openapi": "3.0.0",
+            "info": {
+                "title": "MockForge",
+                "version": "1.0.0",
+                "description": (
+                    "Generated from the routes registered on this MockForge instance, "
+                    "plus the built-in /_mockforge/ inspection routes. "
+                    "Response schemas are not included."
+                ),
+            },
+            "paths": paths,
+        }
+
+    def build_server(self) -> ThreadedHTTPServer:
+        server = ThreadedHTTPServer((self.host, self.port), MockForgeHandler)
+        server.forge = self  # type: ignore[attr-defined]
+        self.port = server.server_address[1]
+        return server
 
     def serve(self):
-        MockForgeHandler.routes = self.routes
-        server = ThreadedHTTPServer((self.host, self.port), MockForgeHandler)
-        print("=" * 70)
-        print(f"🚀 MOCKFORGE SERVER ACTIVE: http://{self.host}:{self.port}")
-        print(f"📡 Registered Contract Endpoints: {len(self.routes)}")
-        print(f"📊 Live Telemetry Dashboard   : http://{self.host}:{self.port}/_mockforge/metrics")
-        print(f"🔍 Route Manifest             : http://{self.host}:{self.port}/_mockforge/routes")
-        print("=" * 70)
+        """Serve until Ctrl+C. ``shutdown()`` is not called on this thread."""
+        server = self.build_server()
+        print("=" * 70, flush=True)
+        print(f"🚀 MOCKFORGE SERVER ACTIVE: http://{self.host}:{self.port}", flush=True)
+        print(f"📡 Registered Contract Endpoints: {len(self.routes)}", flush=True)
+        print(f"📊 Live Telemetry Dashboard   : http://{self.host}:{self.port}/_mockforge/metrics", flush=True)
+        print(f"🔍 Route Manifest             : http://{self.host}:{self.port}/_mockforge/routes", flush=True)
+        print("=" * 70, flush=True)
         try:
             server.serve_forever()
         except KeyboardInterrupt:
-            print("\nShutting down MockForge gracefully...")
-            server.shutdown()
+            print("\nShutting down MockForge.", flush=True)
+        finally:
+            server.server_close()
 
 
 # =====================================================================
-# 6. ENTERPRISE BOILERPLATE & CLI RUNNER
+# 6. DEMO AND CLI
 # =====================================================================
 
 def build_enterprise_demo() -> MockForge:
-    """Pre-configures a robust production scenario for immediate demonstration."""
+    """Demo server used by ``python3 main.py start`` and ``export-spec``."""
     forge = MockForge(port=8080)
 
-    # 1. Stateful Customer/User CRUD Engine
     forge.resource("customers", base_path="/api/v1/customers")
     forge.seed("customers", 5, lambda: {
         "name": DataForge.name(),
@@ -489,7 +541,6 @@ def build_enterprise_demo() -> MockForge:
         "status": "ACTIVE"
     })
 
-    # 2. Stateful Orders/Transactions
     forge.resource("orders", base_path="/api/v1/orders")
     forge.seed("orders", 3, lambda: {
         "transaction_code": f"TXN-{random.randint(100000, 999999)}",
@@ -497,7 +548,6 @@ def build_enterprise_demo() -> MockForge:
         "status": "COMPLETED"
     })
 
-    # 3. Dynamic Contract Endpoint with Generative Macro Templates
     forge.mock(
         path="/api/v1/analytics/realtime",
         method="GET",
@@ -515,7 +565,6 @@ def build_enterprise_demo() -> MockForge:
         latency_ms=(15, 45)
     )
 
-    # 4. Resilience & Chaos Engineering Mock (Simulates third-party flaky payment gateway)
     forge.mock(
         path="/api/v1/gateway/charge",
         method="POST",
@@ -525,19 +574,22 @@ def build_enterprise_demo() -> MockForge:
             "verified": True
         },
         latency_ms=(150, 450),
-        failure_rate=0.25  # 25% simulated internal server failure
+        failure_rate=0.25
     )
 
     return forge
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="MockForge: Autonomous API Simulation & Synthetic Microservice Engine"
-    )
+    parser = argparse.ArgumentParser(description="MockForge: mock HTTP API for local development")
     parser.add_argument("command", choices=["start", "export-spec"], help="Action to execute")
     parser.add_argument("--port", type=int, default=8080, help="Server port (Default: 8080)")
-    parser.add_argument("--host", type=str, default="0.0.0.0", help="Host interface (Default: 0.0.0.0)")
+    parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host interface (Default: 127.0.0.1). Use 0.0.0.0 to listen on all interfaces.",
+    )
 
     args = parser.parse_args()
 
@@ -547,22 +599,8 @@ def main():
         forge.host = args.host
         forge.serve()
     elif args.command == "export-spec":
-        # Autonomous OpenAPI 3.0 Manifest Generation
-        spec = {
-            "openapi": "3.0.0",
-            "info": {
-                "title": "MockForge Autonomous Mock Engine Spec",
-                "version": "1.0.0",
-                "description": "Auto-generated contract manifest for synthetic services."
-            },
-            "paths": {
-                "/api/v1/customers": {"get": {"summary": "List customers"}, "post": {"summary": "Create customer"}},
-                "/api/v1/customers/{id}": {"get": {"summary": "Get customer"}, "put": {"summary": "Update customer"}},
-                "/api/v1/analytics/realtime": {"get": {"summary": "Realtime telemetry metrics"}},
-                "/api/v1/gateway/charge": {"post": {"summary": "Payment charge endpoint (Chaos enabled)"}}
-            }
-        }
-        print(json.dumps(spec, indent=2))
+        forge = build_enterprise_demo()
+        print(json.dumps(forge.export_spec(), indent=2))
 
 
 if __name__ == "__main__":
