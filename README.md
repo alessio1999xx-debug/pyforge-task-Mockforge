@@ -94,7 +94,7 @@ These routes also exist on every server, including one you build in code. They a
 | Method and path | Response |
 | --- | --- |
 | `GET /_mockforge/routes` | Registered routes: method, regex, action, and a stateful flag. |
-| `GET /_mockforge/logs` | The last 50 matched requests (method, path, status, latency, timestamp). The log holds up to 200. |
+| `GET /_mockforge/logs` | The last 50 entries from a buffer of 200 (method, path, status, latency, timestamp). An entry is written when a matched route gets past chaos injection, including a stateful 404. Unmatched 404s and injected HTTP 500s stay out of this buffer and still count in metrics. |
 | `GET /_mockforge/metrics` | Uptime, request count, failure count, average latency, and the figures below. |
 
 Average latency includes the artificial sleep. The money fields follow a fixed formula: every recorded request, including 404s and injected 500s, adds 1.5 minutes at $95 per hour. `velocity_roi_multiplier` is always the string `"12.8x"`.
@@ -166,7 +166,7 @@ Every `{{int:...}}` in a single string uses the first range and the same integer
 ## Other details
 
 - Responses that have a body are pretty-printed JSON (`Content-Type: application/json; charset=utf-8`) with `Access-Control-Allow-Origin: *`. The status line is HTTP/1.0. `OPTIONS` returns 204 and the same CORS headers.
-- The server is `ThreadingMixIn`: one thread per request, daemon threads, no pool cap. `allow_reuse_address` is left off, so an immediate restart can fail with "address already in use".
+- The server is `ThreadingMixIn`: one thread per request, daemon threads, no pool cap.
 - An injected HTTP 500 is sent without reading the body. Other `POST`, `PUT`, and `PATCH` requests read `Content-Length` bytes. Valid JSON becomes the body object. Any other payload becomes `{"_raw": "<text>"}`.
 - `mock()` compiles `path` as a regular expression after substituting `{placeholders}`. Characters such as `.` are still regex syntax.
 - There is no authentication, TLS, pagination, schema check, or persistence. State lives on class attributes of `MockForgeHandler`, so every `MockForge` in the process shares one store, one route table (replaced by the instance that calls `serve()`), and one telemetry counter.
