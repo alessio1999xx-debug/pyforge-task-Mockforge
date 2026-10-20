@@ -11,10 +11,10 @@ Requires Python 3.8 or newer. The examples below were run with Python 3.12. `req
 From this directory:
 
 ```bash
-python3 main.py start --host 127.0.0.1 --port 8080
+python3 main.py start
 ```
 
-That starts the built-in demo. With no flags the bind address is `0.0.0.0:8080`. The process stays up until it receives `SIGTERM` (`kill <pid>`). `Ctrl+C` runs `HTTPServer.shutdown()` on the same thread as `serve_forever()`, and that call waits forever.
+That starts the built-in demo on `127.0.0.1:8080`. `Ctrl+C` stops it and closes the port. `--port` chooses another port. `--host 0.0.0.0` listens on all interfaces.
 
 In another shell:
 
@@ -31,7 +31,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/gateway/charge \
 python3 main.py export-spec
 ```
 
-`export-spec` prints one fixed OpenAPI 3.0 JSON document and exits. The document's `description` calls that document auto-generated; the body is a literal dict in `main()`. It lists customers (GET and POST on the collection, GET and PUT on an item), `/api/v1/analytics/realtime`, and `/api/v1/gateway/charge`. Orders, PATCH, DELETE, and the `/_mockforge/` routes are absent. `--port` and `--host` are ignored.
+`export-spec` builds the same demo and prints an OpenAPI 3.0 path list from those routes, then exits. The list includes customers and orders (GET and POST on the collection, GET, PUT, PATCH, and DELETE on an item), `/api/v1/analytics/realtime`, `/api/v1/gateway/charge`, and the three `/_mockforge/` routes. The charge operation notes its `0.25` failure probability. Response schemas are omitted. `--port` and `--host` do not change the document. From Python, `forge.export_spec()` does the same for whatever you registered on that instance.
 
 ## Demo routes
 
@@ -64,13 +64,13 @@ Each seeded order has `transaction_code` (`TXN-` plus six digits), `amount` (a J
 }
 ```
 
-Those values are generated again at each process start. `GET /api/v1/analytics/realtime` renders a new body on every call. `active_users`, `mrr`, and `load_factor` are strings, because every macro expands to text. One captured response:
+Those values are generated again at each process start. `GET /api/v1/analytics/realtime` renders a new body on every call. `active_users` is a JSON number because that template value is exactly `{{int:150:850}}`. `mrr` stays text because `{{currency}}` always expands to text. `load_factor` stays text because of the `%` suffix. One response has this shape:
 
 ```json
 {
-  "session_id": "facd617b-6ebf-4c3f-9be6-dd61094678d4",
-  "server_time": "2026-10-20T11:27:55.504267+00:00",
-  "active_users": "489",
+  "session_id": "8f5c0c2e-1b4a-4e5d-9c0a-6e7f8a9b0c1d",
+  "server_time": "2026-10-20T12:00:00.000000+00:00",
+  "active_users": 489,
   "mrr": "741.23",
   "status": "HEALTHY",
   "infrastructure": { "datacenter": "us-east-1", "load_factor": "80%" }
@@ -93,11 +93,11 @@ These routes also exist on every server, including one you build in code. They a
 
 | Method and path | Response |
 | --- | --- |
-| `GET /_mockforge/routes` | Registered routes: method, regex, action, and a stateful flag. |
-| `GET /_mockforge/logs` | The last 50 entries from a buffer of 200 (method, path, status, latency, timestamp). An entry is written when a matched route gets past chaos injection, including a stateful 404. Unmatched 404s and injected HTTP 500s stay out of this buffer and still count in metrics. |
-| `GET /_mockforge/metrics` | Uptime, request count, failure count, average latency, and the figures below. |
+| `GET /_mockforge/routes` | Registered routes: method, path template, regex, action, and a stateful flag. |
+| `GET /_mockforge/logs` | The last 50 entries from a buffer of 200 (method, path, status, latency, timestamp). Ordinary responses, stateful 404s, unmatched 404s, injected HTTP 500s, and template errors are all recorded. |
+| `GET /_mockforge/metrics` | `uptime_seconds`, `total_requests`, `total_failures`, and `avg_latency_ms`. |
 
-Average latency includes the artificial sleep. The money fields follow a fixed formula: every recorded request, including 404s and injected 500s, adds 1.5 minutes at $95 per hour. `velocity_roi_multiplier` is always the string `"12.8x"`.
+Average latency includes the artificial sleep. Unmatched 404s and injected 500s count toward the totals. Fetching `/_mockforge/metrics`, `/_mockforge/routes`, or `/_mockforge/logs` does not.
 
 Stateful demo routes sleep for a random 10–60 ms on every request, including writes.
 
@@ -133,8 +133,10 @@ forge.mock(
     failure_rate=0.0,
 )
 
-forge.serve()  # blocks
+forge.serve()  # blocks until Ctrl+C
 ```
+
+In that health template, `active_users` is a JSON number on the wire. `id`, `status`, and `checked_at` stay strings.
 
 `resource(name, base_path=None)` registers six routes. The default base path is `/api/v1/{name}`. Collection URLs accept an optional trailing slash. Item URLs capture `{id}` as any segment except `/`.
 
@@ -148,7 +150,7 @@ forge.serve()  # blocks
 
 ## Template macros
 
-Macros run only inside strings, and only as exact tokens. Numbers, booleans, and nulls are copied through, which is why `"ok": True` stays a JSON boolean. Each string is handled on its own. A token that appears twice in that string is replaced with one shared value.
+Macros run only inside strings, and only as exact tokens. Numbers, booleans, and nulls are copied through, which is why `"ok": True` stays a JSON boolean. Each occurrence is rendered on its own, including two tokens in one string.
 
 | Token | Inserted text |
 | --- | --- |
@@ -159,17 +161,31 @@ Macros run only inside strings, and only as exact tokens. Numbers, booleans, and
 | `{{status}}` | One of `ACTIVE`, `PENDING`, `PROCESSING`, `FLAGGED`, `COMPLETED`, `SUSPENDED`. |
 | `{{iso_date}}` | Current UTC time from `datetime.now(timezone.utc).isoformat()`. |
 | `{{currency}}` | `str(DataForge.currency())`: `random.uniform(10, 10000)` rounded to two decimals. The token takes no range. `DataForge.currency(min_val, max_val)` accepts a range only when called from Python. |
-| `{{int:min:max}}` | `random.randint(min, max)` as text. Both ends are inclusive. |
+| `{{int:min:max}}` | `random.randint(min, max)`. Both ends are inclusive. The value is a JSON number when the string is only that token, and text when the token sits inside other characters. |
 
-Every `{{int:...}}` in a single string uses the first range and the same integer. `"users={{int:1:2}} load={{int:8:9}}"` can render as `"users=1 load=1"`. The same rule applies to repeated `{{currency}}` tokens. `min` greater than `max` raises `ValueError` inside the request thread.
+`{{int:1:1}}-{{int:2:2}}` becomes the text `1-2`. Two `{{uuid}}` tokens in one string are different ids. The same is true for `{{currency}}` and the other tokens. If `min` is greater than `max`, the request returns HTTP 400:
+
+```json
+{ "error": "TemplateError", "message": "{{int:5:1}} is invalid because 5 is greater than 1." }
+```
+
+The server keeps running. Calling `DataForge.synthesize_template("{{int:5:1}}")` raises `TemplateError`.
 
 ## Other details
 
 - Responses that have a body are pretty-printed JSON (`Content-Type: application/json; charset=utf-8`) with `Access-Control-Allow-Origin: *`. The status line is HTTP/1.0. `OPTIONS` returns 204 and the same CORS headers.
-- The server is `ThreadingMixIn`: one thread per request, daemon threads, no pool cap.
-- An injected HTTP 500 is sent without reading the body. Other `POST`, `PUT`, and `PATCH` requests read `Content-Length` bytes. Valid JSON becomes the body object. Any other payload becomes `{"_raw": "<text>"}`.
+- The server is `ThreadingMixIn`: one thread per request, daemon threads, no pool cap. `allow_reuse_address` is on, so a restart can bind the same port immediately.
+- `POST`, `PUT`, and `PATCH` read `Content-Length` bytes before the chaos roll. Valid JSON becomes the body object. Any other payload becomes `{"_raw": "<text>"}`. An injected HTTP 500 does not echo that body.
 - `mock()` compiles `path` as a regular expression after substituting `{placeholders}`. Characters such as `.` are still regex syntax.
-- There is no authentication, TLS, pagination, schema check, or persistence. State lives on class attributes of `MockForgeHandler`, so every `MockForge` in the process shares one store, one route table (replaced by the instance that calls `serve()`), and one telemetry counter.
+- There is no authentication, TLS, pagination, schema check, or persistence. Each `MockForge` has its own store, route list, request log, and counters.
+
+## Tests
+
+```bash
+python3 -m unittest test_main.py
+```
+
+The tests use only the standard library. They cover CRUD, chaos failures, template macros, separate instances, route export, and Ctrl+C shutdown.
 
 ## PyForge
 
